@@ -1,0 +1,13 @@
+# Whitelist: only these are versioned.
+/*
+!/.gitignore
+!/.gitmodules
+!/README.md
+!/LICENSE
+!/EXCEPTIONS.md
+!/THIRD-PARTY-NOTICES.md
+!/plugin/
+!/cs-patch/
+!/extern/
+/plugin/build/
+/plugin/.cache/
