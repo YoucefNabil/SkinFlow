@@ -58,17 +58,17 @@ namespace skinflow
 	ComputeStateBackup::ComputeStateBackup(ID3D11DeviceContext* a_context)
 	{
 		a_context->CSGetShader(&shader, nullptr, nullptr);
-		a_context->CSGetConstantBuffers(0, 1, &constants);
+		a_context->CSGetConstantBuffers(0, static_cast<UINT>(constants.size()), constants.data());
 		a_context->CSGetShaderResources(0, static_cast<UINT>(srvs.size()), srvs.data());
-		a_context->CSGetUnorderedAccessViews(0, 1, &uav);
+		a_context->CSGetUnorderedAccessViews(0, static_cast<UINT>(uavs.size()), uavs.data());
 	}
 
 	void ComputeStateBackup::Restore(ID3D11DeviceContext* a_context)
 	{
 		a_context->CSSetShader(shader, nullptr, 0);
-		a_context->CSSetConstantBuffers(0, 1, &constants);
+		a_context->CSSetConstantBuffers(0, static_cast<UINT>(constants.size()), constants.data());
 		a_context->CSSetShaderResources(0, static_cast<UINT>(srvs.size()), srvs.data());
-		a_context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+		a_context->CSSetUnorderedAccessViews(0, static_cast<UINT>(uavs.size()), uavs.data(), nullptr);
 	}
 
 	ComputeStateBackup::~ComputeStateBackup()
@@ -79,10 +79,14 @@ namespace skinflow
 			}
 		};
 		release(shader);
-		release(constants);
+		for (auto* buffer : constants) {
+			release(buffer);
+		}
 		for (auto* view : srvs) {
 			release(view);
 		}
-		release(uav);
+		for (auto* view : uavs) {
+			release(view);
+		}
 	}
 }

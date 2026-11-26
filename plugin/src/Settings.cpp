@@ -48,7 +48,7 @@ namespace skinflow
 	{
 		enabled = ReadInt(L"General", L"bEnabled", enabled) != 0;
 		maxResolution = std::clamp(ReadInt(L"General", L"iMaxResolution", maxResolution), 64u, 2048u);
-		maxSurfaces = std::clamp(ReadInt(L"General", L"iMaxSurfaces", maxSurfaces), 1u, 64u);
+		maxSurfaces = std::clamp(ReadInt(L"General", L"iMaxSurfaces", maxSurfaces), 1u, 128u);
 		statsInterval = ReadInt(L"General", L"iStatsInterval", statsInterval);
 		logger::info("settings: enabled={} maxResolution={} maxSurfaces={}", enabled, maxResolution, maxSurfaces);
 
@@ -94,6 +94,7 @@ namespace skinflow
 		ok &= WriteFloat(L"Simulation", L"fEvaporation", l.simulation.evaporation);
 		ok &= WriteFloat(L"Simulation", L"fResidual", l.simulation.residual);
 		ok &= WriteFloat(L"Simulation", L"fCellSize", l.simulation.cellSize);
+		ok &= WriteString(L"Simulation", L"bConnectSeams", l.simulation.connectSeams ? L"1" : L"0");
 		{
 			std::scoped_lock guard(liveLock);
 			iniTime = IniTime();  // our own write: nothing to reload
@@ -125,10 +126,11 @@ namespace skinflow
 		next.simulation.residual = ReadFloat(L"Simulation", L"fResidual", defaults.simulation.residual, 0.0f, 0.5f);
 		next.simulation.poreShare = ReadFloat(L"Simulation", L"fPoreShare", defaults.simulation.poreShare, 0.02f, 1.0f);
 		next.simulation.cellSize = ReadFloat(L"Simulation", L"fCellSize", defaults.simulation.cellSize, 0.05f, 2.0f);
+		next.simulation.connectSeams = ReadInt(L"Simulation", L"bConnectSeams", defaults.simulation.connectSeams) != 0;
 		logger::info("look: view={} amount={:.2f} dropSize={:.2f} sheen={:.2f}", next.debugView, next.amount, next.look.dropSize, next.look.sheen);
-		logger::info("simulation: sweatRate={:.3f} poreShare={:.3f} runSpeed={:.2f} evaporation={:.3f} residual={:.3f} cellSize={:.3f}",
+		logger::info("simulation: sweatRate={:.3f} poreShare={:.3f} runSpeed={:.2f} evaporation={:.3f} residual={:.3f} cellSize={:.3f} connectSeams={}",
 			next.simulation.sweatRate, next.simulation.poreShare, next.simulation.runSpeed, next.simulation.evaporation, next.simulation.residual,
-			next.simulation.cellSize);
+			next.simulation.cellSize, next.simulation.connectSeams);
 
 		std::scoped_lock guard(liveLock);
 		live = next;

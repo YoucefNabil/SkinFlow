@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(SkinFlow VERSION 0.1.0 LANGUAGES CXX)
+project(SkinFlow VERSION 0.1.1 LANGUAGES CXX)
 
 # C++23 + dynamic CRT to match CommonLibSSE-NG (vcpkg triplet x64-windows-static-md).
 set(CMAKE_CXX_STANDARD 23)
@@ -26,6 +26,8 @@ add_library(SkinFlow SHARED
 	src/ShaderFile.cpp
 	src/GravityPass.cpp
 	src/FlowPass.cpp
+	src/SeamMap.cpp
+	src/SeamBuilder.cpp
 	src/SurfaceProbe.cpp
 	src/SettingsMenu.cpp
 	src/RenderHooks.cpp)

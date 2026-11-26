@@ -42,20 +42,22 @@ namespace skinflow
 
 	private:
 		bool Init(ID3D11Device* a_device);
-		// Lazy init, first-write-of-the-frame clear, and the once-per-geometry check.
+		// Lazy init, first-write-of-the-frame clear (of the seam snapshot too when one is asked for this
+		// frame), and the once-per-geometry check.
 		bool Prepare(ID3D11DeviceContext* a_context, Surface& a_surface, const void* a_geometry);
 		void Bind(ID3D11DeviceContext* a_context, Surface& a_surface, bool a_modelSpaceNormals);
+		static bool CapturingSeams(const Surface& a_surface, std::uint64_t a_frame);
 		// At a surface's first write of a frame: reads back an earlier copy of the uvScale sums, or
 		// copies the last frame's sums (before they are cleared) when a new value is due.
 		void MeasureUvScale(ID3D11DeviceContext* a_context, Surface& a_surface, std::uint64_t a_frame);
-		// Compiles Gravity.hlsl's three shaders; replaces the current ones only when all succeed.
+		// Compiles Gravity.hlsl's shaders; replaces the current ones only when all succeed.
 		bool CompileShaders(ID3D11Device* a_device);
 		// Recompiles when Gravity.hlsl was saved (keeps the old shaders when the new file does not compile).
 		void ReloadShadersIfChanged(ID3D11DeviceContext* a_context, std::uint64_t a_frame);
 
 		ComPtr<ID3D11GeometryShader> gs;
-		ComPtr<ID3D11PixelShader> psTangentSpace;
-		ComPtr<ID3D11PixelShader> psModelSpace;
+		// [seam snapshot][model-space normals]
+		std::array<std::array<ComPtr<ID3D11PixelShader>, 2>, 2> ps;
 		ShaderFile source{ L"Gravity.hlsl" };
 		ComPtr<ID3D11RasterizerState> raster;
 		ComPtr<ID3D11DepthStencilState> noDepth;

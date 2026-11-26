@@ -14,12 +14,47 @@ namespace skinflow
 		bool operator==(const SurfaceKey&) const = default;
 	};
 
+	struct Surface;
+
+	// A run of seam entries on a surface that all reach one other surface (or itself), valid while
+	// that surface keeps the generation it had when the seams were built.
+	struct SeamBatch
+	{
+		Surface* other = nullptr;
+		std::uint32_t generation = 0;
+		std::uint32_t offset = 0;
+		std::uint32_t count = 0;
+	};
+
+	// Where the skin continues across this surface's UV cuts (SeamBuilder, Flow.hlsl). Empty until
+	// built for the surface's current generation.
+	struct SurfaceSeams
+	{
+		ComPtr<ID3D11ShaderResourceView> links;  // R8_UINT, bit k = neighbour k is the skin next to the texel
+		ComPtr<ID3D11ShaderResourceView> sends;  // SeamMap::Entry, grouped by sendBatches
+		std::vector<SeamBatch> sendBatches;
+		ComPtr<ID3D11ShaderResourceView> fills;  // SeamMap::Entry, grouped by fillBatches
+		std::vector<SeamBatch> fillBatches;
+	};
+
+	// The one-off position + normal snapshot SeamBuilder asks the gravity pass for (Gravity.hlsl
+	// SEAM_CAPTURE). Exists only while a build for the surface's actor is capturing or reading.
+	struct SeamCapture
+	{
+		ComPtr<ID3D11Texture2D> texture;  // R32G32B32A32_UINT, the surface's size
+		ComPtr<ID3D11RenderTargetView> rtv;
+		ComPtr<ID3D11Texture2D> staging;
+		std::uint64_t requestFrame = 0;   // the gravity pass writes the snapshot in this frame
+		std::uint64_t capturedFrame = 0;  // frame it last did
+	};
+
 	struct Surface
 	{
 		SurfaceKey key{};
 		std::string label;  // for logs: diffuse texture and slot of the first pass after assignment
-		bool inUse = false;
-		std::uint64_t lastRequestFrame = 0;
+		bool inUse = false;                  // assigned to key (until another key takes the slot)
+		std::uint64_t lastRequestFrame = 0;  // frame of its last request
+		std::uint64_t lastRequestTick = 0;   // SurfacePool tick of its last request (idle time for eviction)
 
 		// Texels per side of the gravity and water textures, fitted to the part's world size once its
 		// scale is measured, so a texel (one simulated drop) covers the same skin area on every part.
@@ -32,6 +67,7 @@ namespace skinflow
 		std::uint32_t read = 0;
 
 		std::uint64_t writeFrame = 0;  // frame whose capture went to the write buffer
+		bool gravityReady = false;     // a capture was published since the last reset
 
 		// World units per UV unit, the mean over covered texels: the gravity pass adds each texel's
 		// value (fixed point) and a count into 'metrics', read back a few frames later without stalling.
@@ -50,7 +86,18 @@ namespace skinflow
 		std::uint32_t waterRead = 0;
 		std::uint64_t waterFrame = 0;  // frame whose step went to the write buffer
 		std::uint32_t waterSteps = 0;  // steps since assignment (random seed)
+		float simulatedSeconds = 0.0f;  // simulated time since the last reset (FlowPass warm-up)
 		std::chrono::steady_clock::time_point waterTime{};  // last step, 0 = not stepped yet
+
+		// Changes whenever the surface's texel layout or owner does (assignment, resize): seams built
+		// for an older generation no longer apply.
+		std::uint32_t generation = 0;
+		std::uint32_t coveredTexels = 0;  // drawn texels last measured with uvScale, 0 = not yet
+		// Water other surfaces (or this one) sent here across seams, R32_UINT fixed point (Flow.hlsl Inflow).
+		ComPtr<ID3D11Texture2D> inflow;
+		ComPtr<ID3D11UnorderedAccessView> inflowUav;
+		SurfaceSeams seams;
+		SeamCapture seamCapture;
 
 		std::uint32_t WriteIndex() const { return read ^ 1u; }
 		std::uint32_t WaterWriteIndex() const { return waterRead ^ 1u; }
@@ -70,10 +117,23 @@ namespace skinflow
 		void BeginFrame();
 
 		std::uint64_t Frame() const { return frame; }
+
+		// Calls a_visit(Surface&) for every surface, under the pool's lock (a_visit must not call back
+		// into the pool).
+		template <class Visit>
+		void ForEach(Visit&& a_visit)
+		{
+			std::scoped_lock guard(lock);
+			for (auto& s : surfaces) {
+				a_visit(s);
+			}
+		}
 		std::uint32_t ActiveCount() const;
 		std::uint32_t TakeRefusals() { return refusals.exchange(0); }
 
-		// A surface stays with its actor this long after its last draw before another actor may take it.
+		// A surface stays with its actor for this many frames that drew skin after its last draw before
+		// another actor may take it. Frames that draw no skin (menus, alt-tab, loading) do not count,
+		// so a pause never costs an actor its water.
 		static constexpr std::uint64_t kHoldFrames = 120;
 
 		static constexpr std::uint32_t kMinSize = 32;
@@ -84,7 +144,7 @@ namespace skinflow
 
 	private:
 		static bool CreateMetrics(ID3D11Device* a_device, Surface& a_surface);
-		// Replaces the gravity and water textures with new ones of a_size; keeps the old on failure.
+		// Replaces the gravity, water and inflow textures with new ones of a_size; keeps the old on failure.
 		static bool Resize(ID3D11Device* a_device, Surface& a_surface, std::uint32_t a_size);
 		static std::uint32_t FittedSize(float a_uvScale);
 		void FitSize(ID3D11Device* a_device, ID3D11DeviceContext* a_context, Surface& a_surface);
@@ -94,6 +154,8 @@ namespace skinflow
 		mutable std::mutex lock;
 		std::vector<Surface> surfaces;  // fixed size after first use: pointers stay valid
 		std::uint64_t frame = 1;
+		std::uint64_t tick = 1;  // frames that drew skin: the clock of eviction
+		bool drewSkin = false;   // a surface was requested this frame
 		std::atomic<std::uint32_t> refusals{ 0 };
 	};
 }

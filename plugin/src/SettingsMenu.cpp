@@ -102,6 +102,12 @@ namespace skinflow::SettingsMenu
 					"Size of one simulated spot on the skin, in game units (0.25 = about 3.6 mm). It sets the smallest drop.\n"
 					"Smaller: finer, more numerous drops and more GPU work. Larger: coarser and cheaper.\n"
 					"Changing it starts the sweat over on every body.");
+				changed |= ImGui::Checkbox("Connect seams", &sim.connectSeams);
+				ImGui::SetItemTooltip(
+					"Lets drops run on across the cuts in the skin's texture layout (the sides of the body, the inner arms and legs)\n"
+					"and from one body part to the next (neck, wrists, ankles), and draws drops on those lines whole.\n"
+					"Off: drops vanish where they reach those lines.\n"
+					"The seams are worked out once for each actor, a few seconds after it appears or changes clothes.");
 				const char* views[] = { "Sweat (normal)", "Gravity colours", "Water heat map" };
 				int view = static_cast<int>(std::min(live.debugView, 2u));
 				if (ImGui::Combo("Debug view", &view, views, 3)) {

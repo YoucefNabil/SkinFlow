@@ -13,26 +13,34 @@ namespace skinflow
 	bool GravityPass::CompileShaders(ID3D11Device* a_device)
 	{
 		const auto fixed = std::to_string(kUvScaleFixed);
-		const D3D_SHADER_MACRO defines[]{ { "UV_SCALE_FIXED", fixed.c_str() }, { nullptr, nullptr } };
-		const D3D_SHADER_MACRO modelSpaceDefines[]{ { "UV_SCALE_FIXED", fixed.c_str() },
-			{ "MODELSPACENORMALS", "1" }, { nullptr, nullptr } };
-		const auto gsCode = source.Compile("GSMain", "gs_5_0", defines);
-		const auto psTangentCode = source.Compile("PSMain", "ps_5_0", defines);
-		const auto psModelCode = source.Compile("PSMain", "ps_5_0", modelSpaceDefines);
+		const D3D_SHADER_MACRO gsDefines[]{ { "UV_SCALE_FIXED", fixed.c_str() }, { nullptr, nullptr } };
+		const auto gsCode = source.Compile("GSMain", "gs_5_0", gsDefines);
 		ComPtr<ID3D11GeometryShader> newGs;
-		ComPtr<ID3D11PixelShader> newTangent, newModel;
-		if (!gsCode || !psTangentCode || !psModelCode ||
-			FAILED(a_device->CreateGeometryShader(gsCode->GetBufferPointer(), gsCode->GetBufferSize(), nullptr, newGs.GetAddressOf())) ||
-			FAILED(a_device->CreatePixelShader(psTangentCode->GetBufferPointer(), psTangentCode->GetBufferSize(), nullptr, newTangent.GetAddressOf())) ||
-			FAILED(a_device->CreatePixelShader(psModelCode->GetBufferPointer(), psModelCode->GetBufferSize(), nullptr, newModel.GetAddressOf()))) {
+		if (!gsCode || FAILED(a_device->CreateGeometryShader(gsCode->GetBufferPointer(), gsCode->GetBufferSize(), nullptr, newGs.GetAddressOf()))) {
 			return false;
 		}
+		std::array<std::array<ComPtr<ID3D11PixelShader>, 2>, 2> newPs;
+		for (std::size_t seams = 0; seams < 2; ++seams) {
+			for (std::size_t modelSpace = 0; modelSpace < 2; ++modelSpace) {
+				std::vector<D3D_SHADER_MACRO> defines{ { "UV_SCALE_FIXED", fixed.c_str() } };
+				if (modelSpace) {
+					defines.push_back({ "MODELSPACENORMALS", "1" });
+				}
+				if (seams) {
+					defines.push_back({ "SEAM_CAPTURE", "1" });
+				}
+				defines.push_back({ nullptr, nullptr });
+				const auto code = source.Compile("PSMain", "ps_5_0", defines.data());
+				auto& shader = newPs[seams][modelSpace];
+				if (!code || FAILED(a_device->CreatePixelShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, shader.GetAddressOf()))) {
+					return false;
+				}
+				SetDebugName(shader.Get(), std::format("SkinFlow::GravityPS {}-space normals{}", modelSpace ? "model" : "tangent", seams ? " + seam snapshot" : ""));
+			}
+		}
 		gs = std::move(newGs);
-		psTangentSpace = std::move(newTangent);
-		psModelSpace = std::move(newModel);
+		ps = std::move(newPs);
 		SetDebugName(gs.Get(), "SkinFlow::GravityGS");
-		SetDebugName(psTangentSpace.Get(), "SkinFlow::GravityPS tangent-space normals");
-		SetDebugName(psModelSpace.Get(), "SkinFlow::GravityPS model-space normals");
 		return true;
 	}
 
@@ -102,6 +110,11 @@ namespace skinflow
 			constexpr UINT zeros[4]{};
 			a_context->ClearRenderTargetView(a_surface.rtv[a_surface.WriteIndex()].Get(), zero);
 			a_context->ClearUnorderedAccessViewUint(a_surface.metricsUav.Get(), zeros);
+			auto& snapshot = a_surface.seamCapture;
+			if (snapshot.rtv && snapshot.requestFrame == frame) {
+				a_context->ClearRenderTargetView(snapshot.rtv.Get(), zero);
+				snapshot.capturedFrame = frame;
+			}
 			a_surface.writeFrame = frame;
 			a_surface.capturedGeometry.clear();
 		}
@@ -113,19 +126,26 @@ namespace skinflow
 		return true;
 	}
 
+	bool GravityPass::CapturingSeams(const Surface& a_surface, std::uint64_t a_frame)
+	{
+		return a_surface.seamCapture.rtv && a_surface.seamCapture.capturedFrame == a_frame;
+	}
+
 	void GravityPass::Bind(ID3D11DeviceContext* a_context, Surface& a_surface, bool a_modelSpaceNormals)
 	{
 		const auto res = static_cast<float>(a_surface.size);
 		const D3D11_VIEWPORT viewport{ 0.0f, 0.0f, res, res, 0.0f, 1.0f };
-		ID3D11RenderTargetView* target = a_surface.rtv[a_surface.WriteIndex()].Get();
+		const bool seams = CapturingSeams(a_surface, SurfacePool::Get().Frame());
+		ID3D11RenderTargetView* targets[2]{ a_surface.rtv[a_surface.WriteIndex()].Get(), a_surface.seamCapture.rtv.Get() };
 		ID3D11UnorderedAccessView* metrics = a_surface.metricsUav.Get();
-		a_context->OMSetRenderTargetsAndUnorderedAccessViews(1, &target, nullptr, 1, 1, &metrics, nullptr);
+		// Metrics at u2 (Gravity.hlsl), after the two render targets of the seam snapshot.
+		a_context->OMSetRenderTargetsAndUnorderedAccessViews(seams ? 2 : 1, targets, nullptr, 2, 1, &metrics, nullptr);
 		a_context->RSSetViewports(1, &viewport);
 		a_context->RSSetState(raster.Get());
 		a_context->OMSetBlendState(opaque.Get(), nullptr, 0xFFFFFFFF);
 		a_context->OMSetDepthStencilState(noDepth.Get(), 0);
 		a_context->GSSetShader(gs.Get(), nullptr, 0);
-		a_context->PSSetShader((a_modelSpaceNormals ? psModelSpace : psTangentSpace).Get(), nullptr, 0);
+		a_context->PSSetShader(ps[seams ? 1 : 0][a_modelSpaceNormals ? 1 : 0].Get(), nullptr, 0);
 	}
 
 	void GravityPass::MeasureUvScale(ID3D11DeviceContext* a_context, Surface& a_surface, std::uint64_t a_frame)
@@ -147,6 +167,7 @@ namespace skinflow
 						logger::info("player {}: {:.1f} world units per UV unit", a_surface.label, scale);
 					}
 					a_surface.uvScale = scale;
+					a_surface.coveredTexels = sums[1];
 				}
 				a_context->Unmap(a_surface.metricsReadback.Get(), 0);
 			}

@@ -30,7 +30,7 @@ namespace skinflow
 		ID3D11PixelShader* ps = nullptr;
 	};
 
-	// The compute-stage bindings a compute step changes (shader, b0, t0-t1, u0).
+	// The compute-stage bindings the flow passes change (shader, b0-b1, t0-t4, u0-u2).
 	class ComputeStateBackup
 	{
 	public:
@@ -43,8 +43,8 @@ namespace skinflow
 
 	private:
 		ID3D11ComputeShader* shader = nullptr;
-		ID3D11Buffer* constants = nullptr;
-		std::array<ID3D11ShaderResourceView*, 2> srvs{};
-		ID3D11UnorderedAccessView* uav = nullptr;
+		std::array<ID3D11Buffer*, 2> constants{};
+		std::array<ID3D11ShaderResourceView*, 5> srvs{};
+		std::array<ID3D11UnorderedAccessView*, 3> uavs{};
 	};
 }

@@ -17,9 +17,11 @@ namespace skinflow
 			surfaces.resize(Settings::Get().maxSurfaces);
 		}
 
+		drewSkin = true;
 		for (auto& s : surfaces) {
 			if (s.inUse && s.key == a_key) {
 				s.lastRequestFrame = frame;
+				s.lastRequestTick = tick;
 				FitSize(a_device, a_context, s);
 				return &s;
 			}
@@ -33,8 +35,8 @@ namespace skinflow
 				oldest = &s;
 				break;
 			}
-			const bool evictable = frame - s.lastRequestFrame > kHoldFrames || (a_priority && s.key.actor != a_key.actor);
-			if (evictable && (!oldest || s.lastRequestFrame < oldest->lastRequestFrame)) {
+			const bool evictable = tick - s.lastRequestTick > kHoldFrames || (a_priority && s.key.actor != a_key.actor);
+			if (evictable && (!oldest || s.lastRequestTick < oldest->lastRequestTick)) {
 				oldest = &s;
 			}
 		}
@@ -50,6 +52,7 @@ namespace skinflow
 		oldest->key = a_key;
 		oldest->inUse = true;
 		oldest->lastRequestFrame = frame;
+		oldest->lastRequestTick = tick;
 		oldest->label.clear();
 		oldest->uvScale = 0.0f;  // keeps its size until the new part is measured
 		oldest->metricsCopyFrame = 0;
@@ -88,11 +91,17 @@ namespace skinflow
 	{
 		a_surface.read = 0;
 		a_surface.writeFrame = 0;
+		a_surface.gravityReady = false;
 		a_surface.capturedGeometry.clear();
 		a_surface.waterRead = 0;
 		a_surface.waterFrame = 0;
 		a_surface.waterSteps = 0;
 		a_surface.waterTime = {};
+		a_surface.simulatedSeconds = 0.0f;
+		++a_surface.generation;
+		a_surface.coveredTexels = 0;
+		a_surface.seams = {};
+		a_surface.seamCapture = {};
 	}
 
 	void SurfacePool::BeginFrame()
@@ -101,14 +110,17 @@ namespace skinflow
 		for (auto& s : surfaces) {
 			if (s.inUse && s.writeFrame == frame) {
 				s.read = s.WriteIndex();
+				s.gravityReady = true;
 			}
 			if (s.inUse && s.waterFrame == frame) {
 				s.waterRead = s.WaterWriteIndex();
 			}
-			// Free surfaces nobody asked for in ~10 s so new actors can take them.
-			if (s.inUse && frame - s.lastRequestFrame > 600) {
-				s.inUse = false;
-			}
+		}
+		// Slots are only ever taken over by Acquire (least recently drawn first), never freed on a
+		// timer: an actor out of sight or behind a menu keeps its water until someone needs the slot.
+		if (drewSkin) {
+			++tick;
+			drewSkin = false;
 		}
 		++frame;
 	}
@@ -185,12 +197,25 @@ namespace skinflow
 			next.water[i]->SetPrivateData(WKPDID_D3DDebugObjectName, static_cast<UINT>(name.size()), name.data());
 		}
 
+		D3D11_TEXTURE2D_DESC inflowDesc = desc;
+		inflowDesc.Format = DXGI_FORMAT_R32_UINT;  // Flow.hlsl InterlockedAdd target
+		inflowDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+		if (FAILED(a_device->CreateTexture2D(&inflowDesc, nullptr, next.inflow.ReleaseAndGetAddressOf())) ||
+			FAILED(a_device->CreateUnorderedAccessView(next.inflow.Get(), nullptr, next.inflowUav.ReleaseAndGetAddressOf()))) {
+			logger::error("inflow texture creation failed ({}x{})", res, res);
+			return false;
+		}
+		constexpr std::string_view inflowName = "SkinFlow::Inflow";
+		next.inflow->SetPrivateData(WKPDID_D3DDebugObjectName, static_cast<UINT>(inflowName.size()), inflowName.data());
+
 		a_surface.texture = std::move(next.texture);
 		a_surface.rtv = std::move(next.rtv);
 		a_surface.srv = std::move(next.srv);
 		a_surface.water = std::move(next.water);
 		a_surface.waterSrv = std::move(next.waterSrv);
 		a_surface.waterUav = std::move(next.waterUav);
+		a_surface.inflow = std::move(next.inflow);
+		a_surface.inflowUav = std::move(next.inflowUav);
 		a_surface.size = a_size;
 		return true;
 	}
@@ -206,5 +231,6 @@ namespace skinflow
 		for (auto& view : a_surface.waterUav) {
 			a_context->ClearUnorderedAccessViewFloat(view.Get(), zero);
 		}
+		a_context->ClearUnorderedAccessViewUint(a_surface.inflowUav.Get(), zeros);
 	}
 }

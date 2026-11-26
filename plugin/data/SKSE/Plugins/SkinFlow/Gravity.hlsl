@@ -3,9 +3,13 @@
 // usual, this geometry shader moves each triangle to its UV position and the pixel shader writes
 //   xy = downhill direction in UV space (length = sine of the slope, 0 on flat ground)
 //   z  = outward normal .z (+1 facing up, -1 facing down: where drops fall off)
-//   w  = 1 where the mesh covers the texel (0 where the normal map was missing)
+//   w  = world units per UV unit of the triangle covering the texel, the local scale of the UV
+//        layout (faces get more texels than necks); 0 where nothing covers it (or no normal map)
 // and adds each covered texel's world units per UV unit (fixed point) and a count to the
-// surface's metrics buffer (u1), from which SkinFlow.dll reads the surface's mean scale.
+// surface's metrics buffer (u2), from which SkinFlow.dll reads the surface's mean scale.
+// Compiled with SEAM_CAPTURE, it also writes each texel's position and normal to a second target
+// (SV_Target1, R32G32B32A32_UINT: xyz = position bits, w = packed normal with bit 31 = covered),
+// which SkinFlow.dll reads back once to find where the skin continues across UV cuts (SeamBuilder).
 //
 // The surface normal is the one the skin is lit with: the game's normal map (t1, still bound
 // from the material setup) turned to world space by the VS's frame, exactly as Lighting.hlsl
@@ -41,13 +45,16 @@ struct GS_OUTPUT
 	nointerpolation float3 GradU : TEXCOORD4;
 	nointerpolation float3 GradV : TEXCOORD5;
 	nointerpolation float UvScale : TEXCOORD6;  // world units per UV unit (square root of the area ratio)
+	float3 WorldPosition : TEXCOORD7;           // for the seam capture
 };
 
 #ifndef UV_SCALE_FIXED
 #	define UV_SCALE_FIXED 4  // set by SkinFlow.dll (GravityPass::kUvScaleFixed)
 #endif
 
-RWByteAddressBuffer Metrics : register(u1);  // uint sum of UvScale * UV_SCALE_FIXED, uint texel count
+static const float kMinUvScale = 1.0;  // world units per UV unit
+
+RWByteAddressBuffer Metrics : register(u2);  // uint sum of UvScale * UV_SCALE_FIXED, uint texel count (after the two seam capture targets)
 
 Texture2D<float4> TexNormal : register(t1);
 SamplerState SampNormal : register(s0);  // Lighting.hlsl samples the normal map with s0 too
@@ -76,6 +83,11 @@ SamplerState SampNormal : register(s0);  // Lighting.hlsl samples the normal map
 	o.GradU = (vv * dPdu - uv * dPdv) / gram;
 	o.GradV = (uu * dPdv - uv * dPdu) / gram;
 	o.UvScale = sqrt(length(cross(dPdu, dPdv)));
+	// Geometry shrunk to nothing to hide it (camera mods hide the first-person arms or the head this
+	// way) is still drawn: it must not overwrite the skin it shares the UVs with. No real skin part
+	// is this small (a whole UV layout over less than kMinUvScale world units).
+	if (o.UvScale < kMinUvScale)
+		return;
 	[unroll] for (int i = 0; i < 3; ++i)
 	{
 		const float2 t = input[i].TexCoord0;
@@ -84,12 +96,34 @@ SamplerState SampNormal : register(s0);  // Lighting.hlsl samples the normal map
 		o.TBN0 = input[i].TBN0;
 		o.TBN1 = input[i].TBN1;
 		o.TBN2 = input[i].TBN2;
+		o.WorldPosition = input[i].WorldPosition.xyz;
 		output.Append(o);
 	}
 }
 
-float4 PSMain(GS_OUTPUT input) : SV_Target
+struct PS_OUTPUT
 {
+	float4 Gravity : SV_Target0;
+#ifdef SEAM_CAPTURE
+	uint4 Position : SV_Target1;
+#endif
+};
+
+/// Unit normal, octahedral, 15 bits per axis (x in bits 15-29, y in 0-14), bit 31 set (covered).
+/// SeamMap.cpp UnpackNormal reads it.
+uint PackNormal(float3 n)
+{
+	n /= abs(n.x) + abs(n.y) + abs(n.z);
+	float2 e = n.xy;
+	if (n.z < 0)
+		e = (1 - abs(n.yx)) * float2(n.x >= 0 ? 1.0 : -1.0, n.y >= 0 ? 1.0 : -1.0);
+	const uint2 q = uint2(round(saturate(e * 0.5 + 0.5) * 32767.0));
+	return 0x80000000u | (q.x << 15) | q.y;
+}
+
+PS_OUTPUT PSMain(GS_OUTPUT input)
+{
+	PS_OUTPUT o = (PS_OUTPUT)0;
 	// Drawn in UV space, so the hardware picks the mip that matches the surface size.
 	const float3 texel = TexNormal.Sample(SampNormal, input.TexCoord).xyz;
 #ifdef MODELSPACENORMALS
@@ -98,7 +132,7 @@ float4 PSMain(GS_OUTPUT input) : SV_Target
 	const float3 mapped = texel * 2 - 1;
 #endif
 	if (dot(mapped, mapped) < 0.25)
-		return 0;  // no normal map bound: leave the texel uncovered rather than guess
+		return o;  // no normal map bound: leave the texel uncovered rather than guess
 
 	Metrics.InterlockedAdd(0, uint(input.UvScale * UV_SCALE_FIXED + 0.5));
 	Metrics.InterlockedAdd(4, 1u);
@@ -111,5 +145,9 @@ float4 PSMain(GS_OUTPUT input) : SV_Target
 	float2 dir = float2(dot(gSurface, input.GradU), dot(gSurface, input.GradV));
 	const float len = length(dir);
 	dir = len > 1e-8 ? dir / len * length(gSurface) : 0;
-	return float4(dir, N.z, 1);
+	o.Gravity = float4(dir, N.z, max(input.UvScale, 1e-3));
+#ifdef SEAM_CAPTURE
+	o.Position = uint4(asuint(input.WorldPosition), PackNormal(N));
+#endif
+	return o;
 }

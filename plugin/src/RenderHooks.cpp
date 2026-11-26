@@ -2,6 +2,7 @@
 
 #include "FlowPass.h"
 #include "GravityPass.h"
+#include "SeamBuilder.h"
 #include "Settings.h"
 #include "SurfacePool.h"
 
@@ -45,6 +46,7 @@ namespace skinflow::RenderHooks
 				const auto result = func(a_this, a_params);
 				if (const auto* armed = TakeArmed(a_params)) {
 					if (auto* context = RendererContext()) {
+						SeamBuilder::Get().Tick(context);
 						FlowPass::Get().Step(context, *armed->surface);
 						if (armed->capture) {
 							GravityPass::Get().Capture(context, *armed->surface, a_params->geometry, armed->modelSpaceNormals, [=] { func(a_this, a_params); });
@@ -92,6 +94,27 @@ namespace skinflow::RenderHooks
 			return lowest;
 		}
 
+		// The player's first-person model (arms and hands) carries the player as its user data and the
+		// same body slots and textures as the third-person body, but its world positions are not the
+		// body's (they measured 0 to a quarter of the body's scale): it would re-measure and resize the
+		// player's surfaces on every camera switch. It keeps Advanced Skin's own sweat.
+		bool InFirstPersonModel(RE::TESObjectREFR* a_ref, const RE::NiAVObject* a_geometry)
+		{
+			if (!a_ref->IsPlayerRef()) {
+				return false;
+			}
+			const auto* firstPerson = a_ref->Get3D(true);
+			if (!firstPerson || firstPerson == a_ref->Get3D(false)) {
+				return false;
+			}
+			for (const RE::NiAVObject* node = a_geometry; node; node = node->parent) {
+				if (node == firstPerson) {
+					return true;
+				}
+			}
+			return false;
+		}
+
 		// Actor skin drawn with a skinned mesh: face tint (head) or skin tint (body, hands, feet,
 		// and armour pieces that show skin). Keyed by body part, so RaceMenu overlays (copies of
 		// the body that keep its partitions) and face decals share the part's surface; by diffuse
@@ -106,7 +129,7 @@ namespace skinflow::RenderHooks
 				return std::nullopt;
 			}
 			auto* ref = geometry->GetUserData();
-			if (!ref || ref->GetFormType() != RE::FormType::ActorCharacter) {
+			if (!ref || ref->GetFormType() != RE::FormType::ActorCharacter || InFirstPersonModel(ref, geometry)) {
 				return std::nullopt;
 			}
 			auto* material = a_pass->shaderProperty->GetBaseMaterial();

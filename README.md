@@ -40,13 +40,15 @@ Community Shaders: check out the `skinflow` branch of the fork above (or apply `
 Copy into the game's `Data` folder, or into a mod manager mod that overwrites Community Shaders:
 
 - `SKSE/Plugins/SkinFlow.dll`, `SKSE/Plugins/SkinFlow.ini`, `SKSE/Plugins/SkinFlow/*.hlsl`
-- from the patched Community Shaders build: `SKSE/Plugins/CommunityShaders.dll`, `Shaders/Lighting.hlsl`, `Shaders/Skin/Skin.hlsli`
+- from the patched Community Shaders build: `SKSE/Plugins/CommunityShaders.dll`, `Shaders/Lighting.hlsl`, `Shaders/Skin/Skin.hlsli`, and the rest of the Advanced Skin feature (`Shaders/Features/Skin.ini`, `Shaders/Skin/skin_detail_n.dds`)
 
 Then clear Community Shaders' shader cache once.
 
 ## Settings
 
 `SkinFlow.ini` holds every setting with a comment. With [SKSE Menu Framework](https://www.nexusmods.com/skyrimspecialedition/mods/120352) installed they can be tuned live: F1, then SkinFlow, then Sweat. Save writes them to the ini.
+
+`SKSE/Plugins/SkinFlow/Presets/High detail.ini` holds a finer simulation grid (smoother sheen and trails, about 2.5 times the video memory); copy its lines into `SkinFlow.ini`.
 
 ## License
 
