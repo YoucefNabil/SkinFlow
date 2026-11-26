@@ -47,9 +47,6 @@ Then clear Community Shaders' shader cache once.
 ## Settings
 
 `SkinFlow.ini` holds every setting with a comment. With [SKSE Menu Framework](https://www.nexusmods.com/skyrimspecialedition/mods/120352) installed they can be tuned live: F1, then SkinFlow, then Sweat. Save writes them to the ini.
-
-`SKSE/Plugins/SkinFlow/Presets/High detail.ini` holds a finer simulation grid (smoother sheen and trails, about 2.5 times the video memory); copy its lines into `SkinFlow.ini`.
-
 ## License
 
 GPL-3.0 with the modding exception (`LICENSE`, `EXCEPTIONS.md`), the same terms as Community Shaders. Third-party code: `THIRD-PARTY-NOTICES.md`.
